@@ -9,6 +9,8 @@ Account Management
 
 ⦿ Detect and block suspicious login patterns with brute‑force protection.
 
+
+
 Configuration and Filtering
 
 ⦿ Human‑friendly YAML config via Jackson’s YAML dataformat module 
@@ -16,12 +18,16 @@ Configuration and Filtering
 ⦿ Auto‑moderation and text filter using SymSpell plus leetspeak algorithm for wider accuracy. 
 
 
+
 Database
 ⦿ Asynchronous PostgreSQL manager with on‑the‑fly schema builder ensures high throughput and reliability 
 
 
+
 Proxy Support
 ⦿ Built for Velocity proxy (offline mode) to allow arbitrary usernames and unify Java/Bedrock players
+
+
 
 
 🎮 Usage:
@@ -36,6 +42,8 @@ Proxy Support
 ⦿ /account autolock (Automatically log out of your account each session)
 
 Suspicious activity (e.g. rapid failed logins and out of region logins) triggers alerts in console and temporary lockouts.
+
+
 
 
 🧪 Planned Features
