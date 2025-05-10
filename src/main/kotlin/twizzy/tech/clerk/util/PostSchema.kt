@@ -1,6 +1,5 @@
 package twizzy.tech.clerk.util
 
-
 class PostSchema {
     data class TableColumn(
         val name: String,
@@ -18,8 +17,10 @@ class PostSchema {
             TableColumn("registered_date", "TIMESTAMP WITH TIME ZONE", "DEFAULT NOW()"),
             TableColumn("logins", "JSONB", "DEFAULT '[]'::jsonb"),
             TableColumn("logged_out", "BOOLEAN", "DEFAULT FALSE"),
+            TableColumn("auto_lock", "BOOLEAN", "DEFAULT FALSE"),
             TableColumn("failed_attempts", "INT", "DEFAULT 0"),
             TableColumn("lock_until", "TIMESTAMP WITH TIME ZONE"),
+            TableColumn("lock_reason", "VARCHAR(128)", "DEFAULT ''"), // <-- Added here
             TableColumn("locked", "BOOLEAN", "DEFAULT FALSE"),
             TableColumn("country", "VARCHAR(64)", "DEFAULT ''"),
             TableColumn("region", "VARCHAR(64)", "DEFAULT ''")
