@@ -56,6 +56,9 @@ dependencies {
 
     // Jasync-SQL for PostgreSQL
     implementation("com.github.jasync-sql:jasync-postgresql:2.2.4")
+
+    // Redis Driver (Lettuce)
+    implementation("io.lettuce:lettuce-core:6.3.2.RELEASE")
 }
 
 tasks {

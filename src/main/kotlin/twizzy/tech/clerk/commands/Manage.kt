@@ -4,50 +4,79 @@ import com.velocitypowered.api.proxy.Player
 import kotlinx.coroutines.runBlocking
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextDecoration
 import revxrsal.commands.annotation.Command
+import revxrsal.commands.annotation.Cooldown
 import revxrsal.commands.annotation.Subcommand
 import revxrsal.commands.annotation.Optional
 import revxrsal.commands.velocity.annotation.CommandPermission
 import twizzy.tech.clerk.Clerk
-import twizzy.tech.clerk.commands.Register
 import twizzy.tech.clerk.player.Account
+import twizzy.tech.clerk.util.JacksonFactory
 import twizzy.tech.clerk.util.JaSync
 import kotlin.collections.get
-import kotlin.text.append
 
 @Command("account")
-class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
+class Manage(private val clerk: Clerk) {
 
-    // Store password reset state: Player -> (stage, oldPassword)
-    private val pendingPasswordResets = mutableMapOf<Player, Pair<ResetStage, String?>>()
+    private val account = clerk.account
+    private val jaSync = clerk.jaSync
+    private val langConfig = JacksonFactory.loadLangConfig()
 
-    private enum class ResetStage { WAITING_FOR_OLD, WAITING_FOR_NEW }
+    companion object {
+        // Store password reset state globally, so it persists across instances
+        val pendingPasswordResets = mutableMapOf<Player, Pair<String, String?>>()
+    }
+
+    @Command("account")
+    fun accountUsage(actor: Player) {
+        // Get the multi-line help message from the language configuration
+        val helpMessage = langConfig.getMessage("account.usage.help")
+
+        // Split the help message by lines and process each line
+        val helpLines = helpMessage.lines()
+
+        // Add the top divider
+        actor.sendMessage(Component.text("                                                                              ", NamedTextColor.DARK_GREEN, TextDecoration.STRIKETHROUGH))
+
+        // Process each line of the help message
+        helpLines.forEach { line ->
+            // Remove YAML list indicator (hyphen) if present and trim whitespace
+            val cleanLine = if (line.startsWith("-")) line.substring(1).trim() else line.trim()
+            if (cleanLine.isNotEmpty()) {
+                actor.sendMessage(Component.text(cleanLine))
+            }
+        }
+
+        // Add the bottom divider
+        actor.sendMessage(Component.text("                                                                              ", NamedTextColor.DARK_GREEN, TextDecoration.STRIKETHROUGH))
+    }
 
     @Subcommand("reset")
     suspend fun reset(actor: Player) {
         if (pendingPasswordResets.containsKey(actor)) {
-            actor.sendMessage(Component.text("You are already in the process of resetting your password. Please follow the prompts in chat.", NamedTextColor.YELLOW))
+            actor.sendMessage(Component.text(langConfig.getMessage("account.reset.already_in_process")))
             return
         }
-        pendingPasswordResets[actor] = ResetStage.WAITING_FOR_OLD to null
-        actor.sendMessage(Component.text("Please type your current password in chat to begin the reset process. Type 'cancel' to cancel.", NamedTextColor.YELLOW))
+
+        // Start the reset process
+        pendingPasswordResets[actor] = "old" to null
+        actor.sendMessage(Component.text(langConfig.getMessage("account.reset.start")))
     }
 
-    // Call this from your chat event handler in Clerk.kt
     fun handlePasswordResetChat(actor: Player, message: String) {
         val state = pendingPasswordResets[actor] ?: return
+        val username = actor.username
 
         // Cancel logic
         if (message.equals("cancel", ignoreCase = true)) {
             pendingPasswordResets.remove(actor)
-            actor.sendMessage(Component.text("Password reset cancelled.", NamedTextColor.RED))
+            actor.sendMessage(Component.text(langConfig.getMessage("account.reset.cancelled")))
             return
         }
 
-        val username = actor.username
-
         when (state.first) {
-            ResetStage.WAITING_FOR_OLD -> {
+            "old" -> {
                 // Validate old password
                 val validOld = runBlocking {
                     val query = """
@@ -59,20 +88,21 @@ class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
                     jaSync.executeQuery(query).rows.isNotEmpty()
                 }
                 if (!validOld) {
-                    actor.sendMessage(Component.text("Your current password is incorrect. Password reset cancelled.", NamedTextColor.RED))
-                    pendingPasswordResets.remove(actor)
+                    actor.sendMessage(Component.text(langConfig.getMessage("account.reset.incorrect_password")))
+                    // Keep the player in the reset state instead of removing them
                     return
                 }
-                pendingPasswordResets[actor] = ResetStage.WAITING_FOR_NEW to message
-                actor.sendMessage(Component.text("Please type your new password in chat. Type 'cancel' to cancel.", NamedTextColor.YELLOW))
+                pendingPasswordResets[actor] = "new" to message
+                actor.sendMessage(Component.text(langConfig.getMessage("account.reset.enter_new")))
             }
-            ResetStage.WAITING_FOR_NEW -> {
+            "new" -> {
                 val oldPassword = state.second!!
                 val newPassword = message
+
                 // Password validation
                 if (newPassword.length < 6) {
-                    actor.sendMessage(Component.text("Your password must be at least 6 characters long.", NamedTextColor.RED))
-                    pendingPasswordResets.remove(actor)
+                    actor.sendMessage(Component.text(langConfig.getMessage("account.reset.password_too_short")))
+                    // Keep the player in the reset state instead of removing them
                     return
                 }
                 if (
@@ -80,15 +110,28 @@ class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
                     !newPassword.any { it.isLowerCase() } ||
                     !newPassword.any { it.isDigit() || !it.isLetterOrDigit() }
                 ) {
-                    actor.sendMessage(Component.text("Your password is too weak, try making it more complex.", NamedTextColor.RED))
-                    pendingPasswordResets.remove(actor)
+                    actor.sendMessage(Component.text(langConfig.getMessage("account.reset.password_too_weak")))
+                    // Keep the player in the reset state instead of removing them
                     return
                 }
                 if (oldPassword == newPassword) {
-                    actor.sendMessage(Component.text("The new password must be different from the old password.", NamedTextColor.RED))
+                    actor.sendMessage(Component.text(langConfig.getMessage("account.reset.password_same")))
+                    // Keep the player in the same state instead of removing them from the process
+                    return
+                }
+
+                pendingPasswordResets[actor] = "confirm" to newPassword
+                actor.sendMessage(Component.text(langConfig.getMessage("account.reset.confirm_new")))
+            }
+            "confirm" -> {
+                val newPassword = state.second!!
+
+                if (message != newPassword) {
+                    actor.sendMessage(Component.text(langConfig.getMessage("account.reset.passwords_dont_match")))
                     pendingPasswordResets.remove(actor)
                     return
                 }
+
                 // Actually update the password in the database
                 runBlocking {
                     val query = """
@@ -98,15 +141,17 @@ class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
                     """.trimIndent()
                     jaSync.executeQuery(query)
                 }
-                actor.disconnect(Component.text("Your password has been changed successfully. You have been logged out for security reasons.", NamedTextColor.GREEN))
+
+                actor.disconnect(Component.text(langConfig.getMessage("account.reset.success")))
                 clerk.logger.info(Component.text("$username has just updated their password.", NamedTextColor.GREEN))
-                runBlocking { Account(jaSync, clerk.logger).setLoggedOut(username, true) }
+                runBlocking { account.setLoggedOut(username, true) }
                 pendingPasswordResets.remove(actor)
             }
         }
     }
 
     @Subcommand("logins")
+    @Cooldown(10)
     suspend fun logins(actor: Player) {
         val username = actor.username
 
@@ -116,7 +161,7 @@ class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
         """.trimIndent()
         val result = jaSync.executeQuery(query)
         if (result.rows.isEmpty()) {
-            actor.sendMessage(Component.text("No login history found.", NamedTextColor.YELLOW))
+            actor.sendMessage(Component.text(langConfig.getMessage("account.logins.no_history")))
             return
         }
         val loginsJson = result.rows[0].getString("logins") ?: "[]"
@@ -127,10 +172,10 @@ class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
             emptyList<org.json.JSONObject>()
         }
         if (logins.isEmpty()) {
-            actor.sendMessage(Component.text("No login history found.", NamedTextColor.YELLOW))
+            actor.sendMessage(Component.text(langConfig.getMessage("account.logins.no_history")))
             return
         }
-        actor.sendMessage(Component.text("Last 10 logins:", NamedTextColor.GREEN))
+        actor.sendMessage(Component.text(langConfig.getMessage("account.logins.header")))
         logins.takeLast(10).forEach { login ->
             val platform = login.optString("platform", "Java")
             val dateStr = login.optString("date", "")
@@ -149,12 +194,18 @@ class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
             } catch (e: Exception) {
                 "unknown"
             }
-            val msg = Component.text("$ago on $platform from $country, $region", NamedTextColor.AQUA)
+            val msg = Component.text(langConfig.getMessage("account.logins.format", mapOf(
+                "ago" to ago,
+                "platform" to platform,
+                "country" to country,
+                "region" to region
+            )))
             actor.sendMessage(msg)
         }
     }
 
     @Subcommand("autolock")
+    @Cooldown(10)
     suspend fun autolock(actor: Player) {
         val username = actor.username
 
@@ -172,10 +223,11 @@ class Manage(private val clerk: Clerk, private val jaSync: JaSync) {
             WHERE username = '${username.replace("'", "''")}'
         """.trimIndent()
         jaSync.executeQuery(updateQuery)
+
         if (newAutoLock) {
-            actor.sendMessage(Component.text("Auto-lock enabled. You will be logged out every time you disconnect.", NamedTextColor.GREEN))
+            actor.sendMessage(Component.text(langConfig.getMessage("account.autolock.enabled")))
         } else {
-            actor.sendMessage(Component.text("Auto-lock disabled. You will stay logged in after disconnecting.", NamedTextColor.GREEN))
+            actor.sendMessage(Component.text(langConfig.getMessage("account.autolock.disabled")))
         }
     }
 }

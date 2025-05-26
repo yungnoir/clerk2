@@ -7,4 +7,6 @@ postgres:
 redis:
   host: "localhost"
   port: 6379
-  password: null
+  username: "default"
+  password: "mysecretpassword"
+auto-sync: 10m

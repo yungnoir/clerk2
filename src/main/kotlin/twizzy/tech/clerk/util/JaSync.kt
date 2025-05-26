@@ -4,17 +4,12 @@ import com.github.jasync.sql.db.QueryResult
 import com.github.jasync.sql.db.pool.ConnectionPool
 import com.github.jasync.sql.db.postgresql.PostgreSQLConnectionBuilder
 import kotlinx.coroutines.future.await
+import twizzy.tech.clerk.Clerk
 import java.util.concurrent.atomic.AtomicReference
 
-class JaSync {
+class JaSync(val clerk: Clerk) {
 
-    enum class MessageType {
-        SUCCESS, ATTEMPT, ERROR
-    }
-
-    data class DatabaseMessage(val message: String, val type: MessageType)
-
-    private val config = JacksonFactory.loadDatabaseConfig()
+    val config = JacksonFactory.loadDatabaseConfig()
     private val postgres = config.postgres
     
     // Use lazy initialization for the connection pool to ensure it's only created once
@@ -58,80 +53,89 @@ class JaSync {
         return "pgcrypto extension ensured."
     }
 
-    suspend fun initializeDatabase(): List<DatabaseMessage> {
-        val messages = mutableListOf<DatabaseMessage>()
+    suspend fun initializeDatabase(): List<Clerk.DatabaseMessage> {
+        val messages = mutableListOf<Clerk.DatabaseMessage>()
         try {
-            messages.add(DatabaseMessage("Ensuring pgcrypto extension is enabled...", MessageType.ATTEMPT))
+            messages.add(Clerk.DatabaseMessage("Ensuring pgcrypto extension is enabled...", Clerk.MessageType.ATTEMPT))
             val pgcryptoMsg = ensurePgcryptoExtensionEnabled()
-            messages.add(DatabaseMessage(pgcryptoMsg, MessageType.SUCCESS))
+            messages.add(Clerk.DatabaseMessage(pgcryptoMsg, Clerk.MessageType.SUCCESS))
 
-            val tableName = "accounts"
-            val schemaColumns = PostSchema.AccountsTableSchema.columns
+            // Initialize accounts table
+            messages.addAll(ensureTableWithSchema("accounts", PostSchema.AccountsTableSchema.columns))
+            
+            // Initialize ranks table
+            messages.addAll(ensureTableWithSchema("ranks", PostSchema.RanksTableSchema.columns))
 
-            // Check if table exists
-            val checkTableQuery = """
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = '$tableName'
+            messages.add(Clerk.DatabaseMessage("Database initialization completed successfully", Clerk.MessageType.SUCCESS))
+        } catch (e: Exception) {
+            messages.add(Clerk.DatabaseMessage("Error during database initialization: ${e.message}", Clerk.MessageType.ERROR))
+        }
+        return messages
+    }
+    
+    private suspend fun ensureTableWithSchema(tableName: String, schemaColumns: List<PostSchema.TableColumn>): List<Clerk.DatabaseMessage> {
+        val messages = mutableListOf<Clerk.DatabaseMessage>()
+        
+        // Check if table exists
+        val checkTableQuery = """
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = '$tableName'
+            );
+        """.trimIndent()
+        val tableExists = executeQuery(checkTableQuery).rows.first().getBoolean(0) ?: false
+
+        if (!tableExists) {
+            messages.add(Clerk.DatabaseMessage("Creating $tableName table...", Clerk.MessageType.ATTEMPT))
+            val columnsDef = schemaColumns.joinToString(",\n") {
+                "${it.name} ${it.type}${if (it.constraints.isNotBlank()) " ${it.constraints}" else ""}"
+            }
+            val createTableQuery = """
+                CREATE TABLE $tableName (
+                    $columnsDef
                 );
             """.trimIndent()
-            val tableExists = executeQuery(checkTableQuery).rows.first().getBoolean(0) ?: false
-
-            if (!tableExists) {
-                messages.add(DatabaseMessage("Creating $tableName table...", MessageType.ATTEMPT))
-                val columnsDef = schemaColumns.joinToString(",\n") {
-                    "${it.name} ${it.type}${if (it.constraints.isNotBlank()) " ${it.constraints}" else ""}"
-                }
-                val createTableQuery = """
-                    CREATE TABLE $tableName (
-                        $columnsDef
-                    );
-                """.trimIndent()
-                executeQuery(createTableQuery)
-                messages.add(DatabaseMessage("Successfully created $tableName table", MessageType.SUCCESS))
-                messages.add(DatabaseMessage("Database initialization completed successfully", MessageType.SUCCESS))
-                return messages
-            }
-
-            // Get current columns from DB
-            val getColumnsQuery = """
-                SELECT column_name, data_type, is_nullable, column_default
-                FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = '$tableName';
-            """.trimIndent()
-            val result = executeQuery(getColumnsQuery)
-            val dbColumns = result.rows.map { row ->
-                row.getString("column_name") ?: ""
-            }.toSet()
-
-            val schemaColumnNames = schemaColumns.map { it.name }.toSet()
-
-            // Columns to add
-            val columnsToAdd = schemaColumns.filter { it.name !in dbColumns }
-            // Columns to drop
-            val columnsToDrop = dbColumns.filter { it !in schemaColumnNames }
-
-            // Add missing columns
-            for (col in columnsToAdd) {
-                messages.add(DatabaseMessage("Adding column '${col.name}' to $tableName table...", MessageType.ATTEMPT))
-                val alterQuery = "ALTER TABLE $tableName ADD COLUMN ${col.name} ${col.type}${if (col.constraints.isNotBlank()) " ${col.constraints}" else ""};"
-                executeQuery(alterQuery)
-                messages.add(DatabaseMessage("Successfully added column '${col.name}'", MessageType.SUCCESS))
-            }
-
-            // Drop extra columns
-            for (col in columnsToDrop) {
-                messages.add(DatabaseMessage("Dropping column '$col' from $tableName table...", MessageType.ATTEMPT))
-                val alterQuery = "ALTER TABLE $tableName DROP COLUMN $col;"
-                executeQuery(alterQuery)
-                messages.add(DatabaseMessage("Successfully dropped column '$col'", MessageType.SUCCESS))
-            }
-
-            messages.add(DatabaseMessage("Database schema for '$tableName' is up to date.", MessageType.SUCCESS))
-        } catch (e: Exception) {
-            messages.add(DatabaseMessage("Error during database initialization: ${e.message}", MessageType.ERROR))
+            executeQuery(createTableQuery)
+            messages.add(Clerk.DatabaseMessage("Successfully created $tableName table", Clerk.MessageType.SUCCESS))
+            return messages
         }
+
+        // Get current columns from DB
+        val getColumnsQuery = """
+            SELECT column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = '$tableName';
+        """.trimIndent()
+        val result = executeQuery(getColumnsQuery)
+        val dbColumns = result.rows.map { row ->
+            row.getString("column_name") ?: ""
+        }.toSet()
+
+        val schemaColumnNames = schemaColumns.map { it.name }.toSet()
+
+        // Columns to add
+        val columnsToAdd = schemaColumns.filter { it.name !in dbColumns }
+        // Columns to drop
+        val columnsToDrop = dbColumns.filter { it !in schemaColumnNames }
+
+        // Add missing columns
+        for (col in columnsToAdd) {
+            messages.add(Clerk.DatabaseMessage("Adding column '${col.name}' to $tableName table...", Clerk.MessageType.ATTEMPT))
+            val alterQuery = "ALTER TABLE $tableName ADD COLUMN ${col.name} ${col.type}${if (col.constraints.isNotBlank()) " ${col.constraints}" else ""};"
+            executeQuery(alterQuery)
+            messages.add(Clerk.DatabaseMessage("Successfully added column '${col.name}'", Clerk.MessageType.SUCCESS))
+        }
+
+        // Drop extra columns
+        for (col in columnsToDrop) {
+            messages.add(Clerk.DatabaseMessage("Dropping column '$col' from $tableName table...", Clerk.MessageType.ATTEMPT))
+            val alterQuery = "ALTER TABLE $tableName DROP COLUMN $col;"
+            executeQuery(alterQuery)
+            messages.add(Clerk.DatabaseMessage("Successfully dropped column '$col'", Clerk.MessageType.SUCCESS))
+        }
+
+        messages.add(Clerk.DatabaseMessage("Database schema for '$tableName' is up to date.", Clerk.MessageType.SUCCESS))
         return messages
     }
 
@@ -157,7 +161,7 @@ class JaSync {
 
         return executeQuery(insertQuery)
     }
-    
+
     /**
      * Formats a value for SQL insertion based on the column type
      */
@@ -232,8 +236,4 @@ class JaSync {
             else -> "FALSE"
         }
     }
-
-
-
 }
-

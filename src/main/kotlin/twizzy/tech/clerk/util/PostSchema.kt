@@ -23,7 +23,25 @@ class PostSchema {
             TableColumn("lock_reason", "VARCHAR(128)", "DEFAULT ''"), // <-- Added here
             TableColumn("locked", "BOOLEAN", "DEFAULT FALSE"),
             TableColumn("country", "VARCHAR(64)", "DEFAULT ''"),
-            TableColumn("region", "VARCHAR(64)", "DEFAULT ''")
+            TableColumn("region", "VARCHAR(64)", "DEFAULT ''"),
+            TableColumn("permissions", "JSONB", "DEFAULT '[]'::jsonb"),
+            TableColumn("ranks", "JSONB", "DEFAULT '[{\"rank\": \"Default\"}]'::jsonb"),
+            TableColumn("friends", "JSONB", "DEFAULT '[]'::jsonb"),
+            TableColumn("incoming_requests", "JSONB", "DEFAULT '[]'::jsonb"),
+            TableColumn("outgoing_requests", "JSONB", "DEFAULT '[]'::jsonb"),
+            TableColumn("last_seen", "TIMESTAMP WITH TIME ZONE", "DEFAULT NOW()"),
+            TableColumn("settings", "JSONB", "DEFAULT '[]'::jsonb")
+        )
+    }
+    
+    object RanksTableSchema {
+        val columns = listOf(
+            TableColumn("name", "VARCHAR(32)", "PRIMARY KEY"),
+            TableColumn("prefix", "VARCHAR(64)", "DEFAULT ''"),
+            TableColumn("permissions", "JSONB", "DEFAULT '[]'::jsonb"),
+            TableColumn("inheritance", "JSONB", "DEFAULT '[]'::jsonb"),
+            TableColumn("weight", "INT", "DEFAULT 0"),
+            TableColumn("users", "JSONB", "DEFAULT '[]'::jsonb")
         )
     }
 }

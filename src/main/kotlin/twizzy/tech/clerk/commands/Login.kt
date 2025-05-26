@@ -8,39 +8,44 @@ import revxrsal.commands.annotation.Command
 import revxrsal.commands.annotation.Optional
 import twizzy.tech.clerk.Clerk
 import twizzy.tech.clerk.player.Account
+import twizzy.tech.clerk.util.JacksonFactory
 import twizzy.tech.clerk.util.JaSync
+import java.net.InetSocketAddress
 
-class Login(private val clerk: Clerk, private val jaSync: JaSync) {
+class Login(private val clerk: Clerk) {
+
+    private val account = clerk.account
+    private val langConfig = JacksonFactory.loadLangConfig()
 
     @Command("login")
     fun attemptLogin(actor: Player, @Optional username: String?, @Optional password: String?) {
-        if (clerk.unauthenticatedPlayers.contains(actor)) {
+        if (clerk.unauthenticatedPlayers.contains(actor.uniqueId)) {
             if (username.isNullOrEmpty() || password.isNullOrEmpty()) {
-                actor.sendMessage(Component.text("Usage: /login <username> <password>", NamedTextColor.YELLOW))
+                actor.sendMessage(Component.text(langConfig.getMessage("login.usage"), NamedTextColor.YELLOW))
                 return
             }
-            val account = Account(jaSync, clerk.logger)
             val success = runBlocking {
                 account.loginAccount(actor, username, password)
             }
             if (success) {
-                clerk.unauthenticatedPlayers.remove(actor)
+                clerk.unauthenticatedPlayers.remove(actor.uniqueId)
                 // Log successful login in green
                 clerk.logger.info(Component.text("Player ${actor.username} logged into account $username", NamedTextColor.GREEN))
-                actor.disconnect(Component.text("You have successfully logged in.\nPlease reconnect to access the server."))
+                actor.sendMessage(Component.text(langConfig.getMessage("login.successful"), NamedTextColor.GREEN))
+                actor.transferToHost(InetSocketAddress("minemares.com", 25565))
             }
             // No need for an else block as error messages are handled in loginAccount
         } else {
-            actor.sendMessage(Component.text("You are already logged in.", NamedTextColor.RED))
+            actor.sendMessage(Component.text(langConfig.getMessage("login.already_logged_in"), NamedTextColor.RED))
         }
     }
 
     @Command("logout")
     fun logout(actor: Player) {
         runBlocking {
-            Account(jaSync, clerk.logger).setLoggedOut(actor.username, true)
-            clerk.unauthenticatedPlayers.add(actor)
-            actor.disconnect(Component.text("You have been successfully logged out!", NamedTextColor.YELLOW))
+            account.setLoggedOut(actor.username, true)
+            actor.sendMessage(Component.text(langConfig.getMessage("login.logged_out"), NamedTextColor.YELLOW))
+            actor.transferToHost(InetSocketAddress("minemares.com", 25565))
         }
     }
 }
