@@ -1,14 +1,18 @@
 package twizzy.tech.clerk;
 
+import com.github.shynixn.mccoroutine.velocity.SuspendingPluginContainer
+import com.github.shynixn.mccoroutine.velocity.scope
 import com.google.inject.Inject
 import com.velocitypowered.api.event.Subscribe
 import com.velocitypowered.api.event.permission.PermissionsSetupEvent
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent
+import com.velocitypowered.api.event.proxy.ProxyShutdownEvent
 import com.velocitypowered.api.permission.PermissionFunction
 import com.velocitypowered.api.permission.PermissionProvider
 import com.velocitypowered.api.permission.PermissionSubject
 import com.velocitypowered.api.permission.Tristate
 import com.velocitypowered.api.plugin.Plugin
+import com.velocitypowered.api.plugin.PluginContainer
 import com.velocitypowered.api.proxy.Player
 import com.velocitypowered.api.proxy.ProxyServer
 import kotlinx.coroutines.*
@@ -33,16 +37,25 @@ import java.util.*
     id = "clerk", name = "clerk", authors = ["mightbmax"], version = "2.0"
 )
 
-class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxyServer) {
+class Clerk @Inject constructor(
+    val logger: ComponentLogger,
+    val server: ProxyServer,
+    suspendingPluginContainer: SuspendingPluginContainer,
+    val pluginContainer: PluginContainer
+) {
+    // Declare MCCoroutine's plugin container for coroutine support
+    val mcCoroutine: SuspendingPluginContainer
 
-
-
-    enum class MessageType {
-        SUCCESS, ATTEMPT, ERROR
+    // Initialize in init block
+    init {
+        this.mcCoroutine = suspendingPluginContainer
+        suspendingPluginContainer.initialize(this)
     }
-    data class DatabaseMessage(val message: String, val type: MessageType)
 
-    // Create a single JaSync instance for the entire plugin
+    // Access scope through the pluginContainer
+    val scope by lazy { pluginContainer.scope }
+
+    // Create a single instance of JaSync and Lettuce to manage database connections
     val jaSync = JaSync(this)
     val lettuce = Lettuce(this)
 
@@ -59,6 +72,7 @@ class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxySe
     private val authentication by lazy { Authentication(this) }
 
 
+    // Create the VelocityLamp instance with suggestion providers
     private val lamp = VelocityLamp.builder(this, server)
 
         .suggestionProviders { providers ->
@@ -234,9 +248,14 @@ class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxySe
         }
 
         .build()
-    private val scope = CoroutineScope(Dispatchers.IO)
+
     val unauthenticatedPlayers = mutableSetOf<UUID>()
     val awaitingPasswordConfirmation = mutableMapOf<Player, String>()
+
+    enum class MessageType {
+        SUCCESS, ATTEMPT, ERROR
+    }
+    data class DatabaseMessage(val message: String, val type: MessageType)
 
     init {
         logger.info(Component.text("Attempting to connect to the account database...", NamedTextColor.YELLOW))
@@ -274,9 +293,6 @@ class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxySe
                 }
                 logger.info(Component.text(msg.message, color))
             }
-            
-            // Start auto-sync after database connections are established
-            startAutoSync()
         }
 
         // Register Commands
@@ -298,7 +314,7 @@ class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxySe
     }
 
     @Subscribe
-    fun onProxyInitialization(event: ProxyInitializeEvent) {
+    suspend fun onProxyInitialization(event: ProxyInitializeEvent) {
         logger.info(Component.text("The plugin has finished setting up and is now running!", NamedTextColor.GREEN))
 
 
@@ -306,6 +322,9 @@ class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxySe
         server.eventManager.register(this, staffManager)
         server.eventManager.register(this, connectionHandler)
         server.eventManager.register(this, authentication)
+
+        // Start auto-sync after database connections are established
+        startAutoSync()
     }
 
     fun synchronize() {
@@ -389,25 +408,13 @@ class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxySe
                 return PermissionFunction { permission ->
                     if (subject is Player) {
                         runBlocking {
-                            // Find the username for this player
+                            // The checkPermission method already handles wildcards and hierarchy checks
                             val username = subject.username
-
-                            // Check for direct permission match first
                             if (account.checkPermission(username, permission, lettuce)) {
-                                return@runBlocking Tristate.TRUE
+                                Tristate.TRUE
+                            } else {
+                                Tristate.FALSE
                             }
-
-                            // Check for wildcard permissions
-                            // For example, if permission is "clerk.grant.add", check "clerk.*" and "clerk.grant.*"
-                            val permParts = permission.split(".")
-                            for (i in 1 until permParts.size) {
-                                val wildcardPerm = permParts.subList(0, i).joinToString(".") + ".*"
-                                if (account.checkPermission(username, wildcardPerm, lettuce)) {
-                                    return@runBlocking Tristate.TRUE
-                                }
-                            }
-
-                            Tristate.FALSE
                         }
                     } else {
                         Tristate.UNDEFINED
@@ -421,5 +428,17 @@ class Clerk @Inject constructor(val logger: ComponentLogger, val server: ProxySe
     fun shutdown() {
         jaSync.shutdown()
         lettuce.shutdown()
+    }
+
+    @Subscribe
+    suspend fun onProxyShutdown(event: ProxyShutdownEvent) {
+        logger.info(Component.text("Plugin is shutting down, cleaning up resources...", NamedTextColor.YELLOW))
+
+        withContext(Dispatchers.IO) {
+            // Call the shutdown method to clean up resources
+            shutdown()
+        }
+
+        logger.info(Component.text("Plugin shutdown complete.", NamedTextColor.GREEN))
     }
 }

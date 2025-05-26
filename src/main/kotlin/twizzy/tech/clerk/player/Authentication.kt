@@ -1,20 +1,16 @@
 package twizzy.tech.clerk.player
 
+import com.github.shynixn.mccoroutine.velocity.registerSuspend
 import com.velocitypowered.api.event.Subscribe
 import com.velocitypowered.api.event.command.CommandExecuteEvent
 import com.velocitypowered.api.event.player.GameProfileRequestEvent
 import com.velocitypowered.api.event.player.PlayerChatEvent
 import com.velocitypowered.api.proxy.Player
-import kotlinx.coroutines.runBlocking
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.geysermc.floodgate.api.FloodgateApi
 import twizzy.tech.clerk.Clerk
 import twizzy.tech.clerk.commands.Manage
-import twizzy.tech.clerk.commands.Register
-import twizzy.tech.clerk.util.JaSync
-import twizzy.tech.clerk.util.Lettuce
-import java.lang.reflect.Field
 import java.time.Duration
 import java.time.OffsetDateTime
 
@@ -24,8 +20,13 @@ class Authentication(private val clerk: Clerk) {
     private val lettuce = clerk.lettuce
     private val account = clerk.account // Use the shared account instance from Clerk
 
-    @Subscribe
-    fun gameProfile(event: GameProfileRequestEvent) {
+    init {
+        // Register the suspending event handler properly using MCCoroutine's extension
+        clerk.server.eventManager.registerSuspend(clerk, GameProfileRequestEvent::class.java, this::handleGameProfile)
+    }
+
+    // Changed to a suspending function without @Subscribe annotation
+    suspend fun handleGameProfile(event: GameProfileRequestEvent) {
         val address = event.connection.remoteAddress.address.hostAddress
         val isBedrock = FloodgateApi.getInstance().isFloodgatePlayer(event.gameProfile.id)
         val id = if (isBedrock) {
@@ -36,61 +37,59 @@ class Authentication(private val clerk: Clerk) {
         val uuid = event.gameProfile.id
         val ip = address
 
-        runBlocking {
-            val username = account.getLastLoginUsername(id.toString(), address)
-            if (username == null) {
-                clerk.unauthenticatedPlayers.add(uuid)
-                return@runBlocking
-            }
-
-            // Account found, check auto_lock
-            val autoLockQuery = """
-            SELECT auto_lock, logins FROM accounts WHERE username = '${username.replace("'", "''")}' LIMIT 1;
-            """.trimIndent()
-            val result = jaSync.executeQuery(autoLockQuery)
-            val autoLock = result.rows.firstOrNull()?.getBoolean("auto_lock") ?: false
-
-            if (autoLock) {
-                val loginsJson = result.rows.firstOrNull()?.getString("logins") ?: "[]"
-                try {
-                    val arr = org.json.JSONArray(loginsJson)
-                    val lastLogin = (arr.length() - 1 downTo 0)
-                        .map { arr.getJSONObject(it) }
-                        .firstOrNull {
-                            (it.optString("id") == id || it.optString("ip_address") == ip)
-                        }
-                    if (lastLogin != null) {
-                        val dateStr = lastLogin.optString("date", null)
-                        if (dateStr != null) {
-                            val loginTime = OffsetDateTime.parse(dateStr)
-                            val now = OffsetDateTime.now()
-                            val duration = Duration.between(loginTime, now)
-                            if (duration.toMinutes() >= 2) {
-                                clerk.unauthenticatedPlayers.add(uuid)
-                                logger.info(Component.text("Player ${event.originalProfile.name} would have been logged in, but auto-lock is enabled and last login is too old.", NamedTextColor.YELLOW))
-                                return@runBlocking
-                            }
-                        }
-                    } else {
-                        clerk.unauthenticatedPlayers.add(uuid)
-                        logger.info(Component.text("Player ${event.originalProfile.name} has no recent login, auto-lock enabled.", NamedTextColor.YELLOW))
-                        return@runBlocking
-                    }
-                } catch (_: Exception) {
-                    clerk.unauthenticatedPlayers.add(uuid)
-                    logger.info(Component.text("Player ${event.originalProfile.name} login check failed, auto-lock enabled.", NamedTextColor.YELLOW))
-                    return@runBlocking
-                }
-            }
-
-            // Account exists and either auto_lock is off or recent login is within 2 minutes
-            clerk.unauthenticatedPlayers.remove(uuid)
-            event.gameProfile = event.originalProfile.withName(username)
-
-            // Ensure account is in Redis cache, but don't force an overwrite if it exists
-            lettuce.cachePlayerAccount(username)
-            logger.info(Component.text("${event.originalProfile.name} has joined logged in as $username.", NamedTextColor.GREEN))
+        val username = account.getLastLoginUsername(id.toString(), address)
+        if (username == null) {
+            clerk.unauthenticatedPlayers.add(uuid)
+            return
         }
+
+        // Account found, check auto_lock
+        val autoLockQuery = """
+        SELECT auto_lock, logins FROM accounts WHERE username = '${username.replace("'", "''")}' LIMIT 1;
+        """.trimIndent()
+        val result = jaSync.executeQuery(autoLockQuery)
+        val autoLock = result.rows.firstOrNull()?.getBoolean("auto_lock") ?: false
+
+        if (autoLock) {
+            val loginsJson = result.rows.firstOrNull()?.getString("logins") ?: "[]"
+            try {
+                val arr = org.json.JSONArray(loginsJson)
+                val lastLogin = (arr.length() - 1 downTo 0)
+                    .map { arr.getJSONObject(it) }
+                    .firstOrNull {
+                        (it.optString("id") == id || it.optString("ip_address") == ip)
+                    }
+                if (lastLogin != null) {
+                    val dateStr = lastLogin.optString("date", null)
+                    if (dateStr != null) {
+                        val loginTime = OffsetDateTime.parse(dateStr)
+                        val now = OffsetDateTime.now()
+                        val duration = Duration.between(loginTime, now)
+                        if (duration.toMinutes() >= 2) {
+                            clerk.unauthenticatedPlayers.add(uuid)
+                            logger.info(Component.text("Player ${event.originalProfile.name} would have been logged in, but auto-lock is enabled and last login is too old.", NamedTextColor.YELLOW))
+                            return
+                        }
+                    }
+                } else {
+                    clerk.unauthenticatedPlayers.add(uuid)
+                    logger.info(Component.text("Player ${event.originalProfile.name} has no recent login, auto-lock enabled.", NamedTextColor.YELLOW))
+                    return
+                }
+            } catch (_: Exception) {
+                clerk.unauthenticatedPlayers.add(uuid)
+                logger.info(Component.text("Player ${event.originalProfile.name} login check failed, auto-lock enabled.", NamedTextColor.YELLOW))
+                return
+            }
+        }
+
+        // Account exists and either auto_lock is off or recent login is within 2 minutes
+        clerk.unauthenticatedPlayers.remove(uuid)
+        event.gameProfile = event.originalProfile.withName(username)
+
+        // Ensure account is in Redis cache, but don't force an overwrite if it exists
+        lettuce.cachePlayerAccount(username)
+        logger.info(Component.text("${event.originalProfile.name} has joined logged in as $username.", NamedTextColor.GREEN))
     }
 
     @Subscribe
