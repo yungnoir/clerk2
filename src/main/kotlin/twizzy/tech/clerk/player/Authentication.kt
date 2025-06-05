@@ -87,6 +87,15 @@ class Authentication(private val clerk: Clerk) {
         clerk.unauthenticatedPlayers.remove(uuid)
         event.gameProfile = event.originalProfile.withName(username)
 
+        // If this is a Bedrock player, update the crossplay flag in the database
+        if (isBedrock) {
+            val updateCrossplayQuery = """
+            UPDATE accounts SET crossplay = TRUE WHERE username = '${username.replace("'", "''")}';
+            """.trimIndent()
+            jaSync.executeQuery(updateCrossplayQuery)
+            logger.info(Component.text("Updated crossplay status to TRUE for Bedrock player $username", NamedTextColor.GREEN))
+        }
+
         // Ensure account is in Redis cache, but don't force an overwrite if it exists
         lettuce.cachePlayerAccount(username)
         logger.info(Component.text("${event.originalProfile.name} has joined logged in as $username.", NamedTextColor.GREEN))

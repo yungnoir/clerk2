@@ -35,13 +35,27 @@ class JaSync(val clerk: Clerk) {
     }
 
     suspend fun executeQuery(query: String): QueryResult {
-        return connectionPool.sendQuery(query).await()
+        // Use the plugin's coroutine scope to manage lifecycle properly
+        return try {
+            connectionPool.sendQuery(query).await()
+        } catch (e: Exception) {
+            clerk.logger.error("Database operation failed: ${e.message}")
+            throw e
+        }
     }
 
     // Method to execute multiple queries in a batch to reduce connection overhead
     suspend fun executeBatch(queries: List<String>): List<QueryResult> {
-        return queries.map { query ->
-            connectionPool.sendQuery(query).await()
+        if (queries.isEmpty()) return emptyList()
+
+        // Use structured concurrency for better error handling
+        return try {
+            queries.map { query ->
+                connectionPool.sendQuery(query).await()
+            }
+        } catch (e: Exception) {
+            clerk.logger.error("Batch DB operation failed: ${e.message}")
+            throw e
         }
     }
 

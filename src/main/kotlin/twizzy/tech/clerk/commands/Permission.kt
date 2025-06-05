@@ -1,7 +1,7 @@
 package twizzy.tech.clerk.commands
 
 import com.velocitypowered.api.proxy.Player
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
@@ -65,7 +65,8 @@ class Permission(private val clerk: Clerk) {
             return
         }
 
-        runBlocking {
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             // Check if account exists
             val accountExists = jaSync.executeQuery(
                 "SELECT 1 FROM accounts WHERE username = '${target.replace("'", "''")}'"
@@ -73,7 +74,7 @@ class Permission(private val clerk: Clerk) {
 
             if (!accountExists) {
                 actor.sendMessage(Component.text(langConfig.getMessage("permission.add.no_account", mapOf("target" to target))))
-                return@runBlocking
+                return@launch
             }
 
             // Handle regular vs. timed permissions
@@ -96,7 +97,7 @@ class Permission(private val clerk: Clerk) {
                 val expireAt = parseDuration(duration)
                 if (expireAt == null) {
                     actor.sendMessage(Component.text(langConfig.getMessage("permission.add.invalid_duration")))
-                    return@runBlocking
+                    return@launch
                 }
 
                 // Create timed permission
@@ -135,7 +136,8 @@ class Permission(private val clerk: Clerk) {
             return
         }
 
-        runBlocking {
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             // Check if account exists
             val accountExists = jaSync.executeQuery(
                 "SELECT 1 FROM accounts WHERE username = '${target.replace("'", "''")}'"
@@ -143,7 +145,7 @@ class Permission(private val clerk: Clerk) {
 
             if (!accountExists) {
                 actor.sendMessage(Component.text(langConfig.getMessage("permission.remove.no_account", mapOf("target" to target))))
-                return@runBlocking
+                return@launch
             }
 
             // Remove permission (both regular and timed)
@@ -174,7 +176,8 @@ class Permission(private val clerk: Clerk) {
             return
         }
 
-        runBlocking {
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             // Check if account exists
             val accountExists = jaSync.executeQuery(
                 "SELECT 1 FROM accounts WHERE username = '${target.replace("'", "''")}'"
@@ -182,7 +185,7 @@ class Permission(private val clerk: Clerk) {
 
             if (!accountExists) {
                 actor.sendMessage(Component.text(langConfig.getMessage("permission.list.no_account", mapOf("target" to target))))
-                return@runBlocking
+                return@launch
             }
 
             // List permissions

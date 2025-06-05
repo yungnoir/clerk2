@@ -1,7 +1,7 @@
 package twizzy.tech.clerk.commands
 
 import com.velocitypowered.api.proxy.Player
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import revxrsal.commands.annotation.Command
@@ -24,17 +24,19 @@ class Login(private val clerk: Clerk) {
                 actor.sendMessage(Component.text(langConfig.getMessage("login.usage"), NamedTextColor.YELLOW))
                 return
             }
-            val success = runBlocking {
-                account.loginAccount(actor, username, password)
+
+            // Launch a coroutine in the plugin's scope instead of blocking
+            clerk.scope.launch {
+                val success = account.loginAccount(actor, username, password)
+                if (success) {
+                    clerk.unauthenticatedPlayers.remove(actor.uniqueId)
+                    // Log successful login in green
+                    clerk.logger.info(Component.text("Player ${actor.username} logged into account $username", NamedTextColor.GREEN))
+                    actor.sendMessage(Component.text(langConfig.getMessage("login.successful"), NamedTextColor.GREEN))
+                    actor.transferToHost(InetSocketAddress("minemares.com", 25565))
+                }
+                // No need for an else block as error messages are handled in loginAccount
             }
-            if (success) {
-                clerk.unauthenticatedPlayers.remove(actor.uniqueId)
-                // Log successful login in green
-                clerk.logger.info(Component.text("Player ${actor.username} logged into account $username", NamedTextColor.GREEN))
-                actor.sendMessage(Component.text(langConfig.getMessage("login.successful"), NamedTextColor.GREEN))
-                actor.transferToHost(InetSocketAddress("minemares.com", 25565))
-            }
-            // No need for an else block as error messages are handled in loginAccount
         } else {
             actor.sendMessage(Component.text(langConfig.getMessage("login.already_logged_in"), NamedTextColor.RED))
         }
@@ -42,7 +44,8 @@ class Login(private val clerk: Clerk) {
 
     @Command("logout")
     fun logout(actor: Player) {
-        runBlocking {
+        // Launch a coroutine in the plugin's scope instead of blocking
+        clerk.scope.launch {
             account.setLoggedOut(actor.username, true)
             actor.sendMessage(Component.text(langConfig.getMessage("login.logged_out"), NamedTextColor.YELLOW))
             actor.transferToHost(InetSocketAddress("minemares.com", 25565))

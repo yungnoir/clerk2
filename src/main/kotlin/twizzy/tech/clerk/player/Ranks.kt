@@ -2,17 +2,17 @@ package twizzy.tech.clerk.player
 
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.module.kotlin.readValue
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import twizzy.tech.clerk.Clerk
-import twizzy.tech.clerk.util.JaSync
 import twizzy.tech.clerk.util.JacksonFactory
 import java.io.File
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Logger
 
@@ -335,14 +335,37 @@ class Ranks(private val clerk: Clerk) {
     }
     
     // Get all ranks directly from the database
-    fun getAllRanks(): Map<String, JacksonFactory.Rank> = runBlocking {
-        loadRanksFromDatabase().ranks
+    fun getAllRanks(): Map<String, JacksonFactory.Rank> {
+        val future = CompletableFuture<Map<String, JacksonFactory.Rank>>()
+
+        clerk.scope.launch {
+            try {
+                val ranks = loadRanksFromDatabase().ranks
+                future.complete(ranks)
+            } catch (e: Exception) {
+                logger.warning("Error getting all ranks: ${e.message}")
+                future.complete(emptyMap())
+            }
+        }
+
+        return future.get() // Safe to block here since this is just waiting for our own coroutine
     }
     
     // Get a specific rank directly from the database
-    fun getRank(name: String): JacksonFactory.Rank? = runBlocking {
-        val ranks = loadRanksFromDatabase().ranks
-        ranks[name]
+    fun getRank(name: String): JacksonFactory.Rank? {
+        val future = CompletableFuture<JacksonFactory.Rank?>()
+
+        clerk.scope.launch {
+            try {
+                val ranks = loadRanksFromDatabase().ranks
+                future.complete(ranks[name])
+            } catch (e: Exception) {
+                logger.warning("Error getting rank $name: ${e.message}")
+                future.complete(null)
+            }
+        }
+
+        return future.get() // Safe to block here since this is just waiting for our own coroutine
     }
     
     // Create or update a rank

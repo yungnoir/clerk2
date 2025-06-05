@@ -7,6 +7,7 @@ import io.lettuce.core.api.StatefulRedisConnection
 import io.lettuce.core.api.async.RedisAsyncCommands
 import io.lettuce.core.api.sync.RedisCommands
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -65,149 +66,161 @@ class Lettuce(private val clerk: Clerk) {
 
     suspend fun cachePlayerAccount(username: String) {
         try {
-            // Query relevant account information
-            val query = """
-                SELECT username, platform, registered_date, country, region, permissions, ranks, friends, settings, last_seen
-                FROM accounts
-                WHERE username = '${username.replace("'", "''")}'
-                LIMIT 1
-            """.trimIndent()
-            val result = clerk.jaSync.executeQuery(query)
-            val row = result.rows.firstOrNull() ?: return
+            // Get the plugin's coroutine scope for better lifecycle management
+            clerk.scope.launch {
+                try {
+                    // Query relevant account information
+                    val query = """
+                        SELECT username, platform, registered_date, country, region, permissions, ranks, friends, settings, last_seen
+                        FROM accounts
+                        WHERE username = '${username.replace("'", "''")}'
+                        LIMIT 1
+                    """.trimIndent()
+                    val result = clerk.jaSync.executeQuery(query)
+                    val row = result.rows.firstOrNull() ?: return@launch
 
-            // Safely convert OffsetDateTime to ISO string if needed
-            val registeredDateObj = row["registered_date"]
-            val registeredDate = when (registeredDateObj) {
-                is String -> registeredDateObj
-                is java.time.OffsetDateTime -> registeredDateObj.toString()
-                else -> registeredDateObj?.toString() ?: ""
-            }
+                    // Safely convert OffsetDateTime to ISO string if needed
+                    val registeredDateObj = row["registered_date"]
+                    val registeredDate = when (registeredDateObj) {
+                        is String -> registeredDateObj
+                        is java.time.OffsetDateTime -> registeredDateObj.toString()
+                        else -> registeredDateObj?.toString() ?: ""
+                    }
 
-            // Ensure permissions is valid JSON
-            val permissionsJson = row.getString("permissions") ?: "[]"
-            val validPermissionsJson = try {
-                // Validate by parsing and re-serializing
-                val permissions = mapper.readValue(permissionsJson, Any::class.java)
-                mapper.writeValueAsString(permissions)
-            } catch (e: Exception) {
-                // If parsing fails, default to empty array
-                "[]"
-            }
+                    // Ensure permissions is valid JSON
+                    val permissionsJson = row.getString("permissions") ?: "[]"
+                    val validPermissionsJson = try {
+                        // Validate by parsing and re-serializing
+                        val permissions = mapper.readValue(permissionsJson, Any::class.java)
+                        mapper.writeValueAsString(permissions)
+                    } catch (e: Exception) {
+                        // If parsing fails, default to empty array
+                        "[]"
+                    }
 
-            // Get last_seen timestamp
-            val lastSeenValue = row.get("last_seen")
-            val lastSeenTimestamp = when (lastSeenValue) {
-                is Number -> lastSeenValue.toLong()
-                is String -> {
-                    if (lastSeenValue.contains("-") && lastSeenValue.contains(":")) {
-                        // Format like "2025-05-20 01:22:21.000 -0700"
-                        val parts = lastSeenValue.split(" ")
-                        val datePart = parts[0]
-                        val timePart = if (parts.size > 1) parts[1] else "00:00:00"
+                    // Get last_seen timestamp
+                    val lastSeenValue = row.get("last_seen")
+                    val lastSeenTimestamp = when (lastSeenValue) {
+                        is Number -> lastSeenValue.toLong()
+                        is String -> {
+                            if (lastSeenValue.contains("-") && lastSeenValue.contains(":")) {
+                                // Format like "2025-05-20 01:22:21.000 -0700"
+                                val parts = lastSeenValue.split(" ")
+                                val datePart = parts[0]
+                                val timePart = if (parts.size > 1) parts[1] else "00:00:00"
 
-                        try {
-                            val timestamp = java.sql.Timestamp.valueOf("$datePart $timePart")
-                            timestamp.time / 1000
-                        } catch (e: Exception) {
-                            try {
-                                val instantStr = "${datePart}T$timePart".replace(" ", "")
-                                java.time.Instant.parse(instantStr + "Z").epochSecond
-                            } catch (e2: Exception) {
-                                System.currentTimeMillis() / 1000 // Default to current time if parse fails
+                                try {
+                                    val timestamp = java.sql.Timestamp.valueOf("$datePart $timePart")
+                                    timestamp.time / 1000
+                                } catch (e: Exception) {
+                                    try {
+                                        val instantStr = "${datePart}T$timePart".replace(" ", "")
+                                        java.time.Instant.parse(instantStr + "Z").epochSecond
+                                    } catch (e2: Exception) {
+                                        System.currentTimeMillis() / 1000 // Default to current time if parse fails
+                                    }
+                                }
+                            } else {
+                                lastSeenValue.toLongOrNull() ?: (System.currentTimeMillis() / 1000)
                             }
                         }
+                        is java.time.OffsetDateTime -> lastSeenValue.toEpochSecond()
+                        is java.sql.Timestamp -> lastSeenValue.time / 1000
+                        else -> System.currentTimeMillis() / 1000
+                    }
+
+                    // Get and enhance the friends list from PostgreSQL
+                    val friendsJson = row.getString("friends") ?: "[]"
+                    val friendsList = try {
+                        val list = mapper.readValue(friendsJson, List::class.java) as List<*>
+                        list.mapNotNull {
+                            when (it) {
+                                is String -> it
+                                is Map<*, *> -> it["username"]?.toString()
+                                else -> null
+                            }
+                        }
+                    } catch (e: Exception) {
+                        clerk.logger.warn(Component.text("Error parsing friends list from PostgreSQL: ${e.message}", NamedTextColor.YELLOW))
+                        emptyList()
+                    }
+
+                    // Enhance friends list with last seen data immediately
+                    val enhancedFriendsList = if (friendsList.isNotEmpty()) {
+                        clerk.logger.info(Component.text(
+                            "=== Building enhanced friends list for $username with ${friendsList.size} friends during account cache ===",
+                            NamedTextColor.GOLD
+                        ))
+
+                        // Get last seen data for all friends
+                        val friendsWithLastSeen = friendsList.map { friendName ->
+                            // Get last seen for each friend
+                            val friendLastSeen = getLastSeenForFriend(friendName)
+
+                            // Create friend data with both 'since' and 'lastseen'
+                            val friendData = mutableMapOf<String, Any>(
+                                "username" to friendName,
+                                "lastseen" to (friendLastSeen ?: 0)
+                            )
+
+                            // Add 'since' from original friend data if available
+                            val originalFriendData = extractSinceValueForFriend(friendsJson, friendName)
+                            if (originalFriendData != null) {
+                                friendData["since"] = originalFriendData
+                            }
+
+                            friendData
+                        }
+
+                        mapper.writeValueAsString(friendsWithLastSeen)
                     } else {
-                        lastSeenValue.toLongOrNull() ?: (System.currentTimeMillis() / 1000)
+                        friendsJson
                     }
-                }
-                is java.time.OffsetDateTime -> lastSeenValue.toEpochSecond()
-                is java.sql.Timestamp -> lastSeenValue.time / 1000
-                else -> System.currentTimeMillis() / 1000
-            }
 
-            // Get and enhance the friends list from PostgreSQL
-            val friendsJson = row.getString("friends") ?: "[]"
-            val friendsList = try {
-                val list = mapper.readValue(friendsJson, List::class.java) as List<*>
-                list.mapNotNull {
-                    when (it) {
-                        is String -> it
-                        is Map<*, *> -> it["username"]?.toString()
-                        else -> null
-                    }
-                }
-            } catch (e: Exception) {
-                clerk.logger.warn(Component.text("Error parsing friends list from PostgreSQL: ${e.message}", NamedTextColor.YELLOW))
-                emptyList()
-            }
+                    clerk.logger.info(Component.text(
+                        "Enhanced friends list for $username: $enhancedFriendsList",
+                        NamedTextColor.AQUA
+                    ))
 
-            // Enhance friends list with last seen data immediately
-            val enhancedFriendsList = if (friendsList.isNotEmpty()) {
-                clerk.logger.info(Component.text(
-                    "=== Building enhanced friends list for $username with ${friendsList.size} friends during account cache ===",
-                    NamedTextColor.GOLD
-                ))
-
-                // Get last seen data for all friends
-                val friendsWithLastSeen = friendsList.map { friendName ->
-                    // Get last seen for each friend
-                    val friendLastSeen = getLastSeenForFriend(friendName)
-
-                    // Create friend data with both 'since' and 'lastseen'
-                    val friendData = mutableMapOf<String, Any>(
-                        "username" to friendName,
-                        "lastseen" to (friendLastSeen ?: 0)
+                    val accountInfo = mapOf(
+                        "username" to (row.getString("username") ?: ""),
+                        "platform" to (row.getString("platform") ?: ""),
+                        "registered_date" to registeredDate,
+                        "country" to (row.getString("country") ?: ""),
+                        "region" to (row.getString("region") ?: ""),
+                        "permissions" to validPermissionsJson,
+                        "ranks" to (row.getString("ranks") ?: "[]"),
+                        "friends" to enhancedFriendsList, // Use enhanced friends list
+                        "settings" to (row.getString("settings") ?: "{}"),
+                        "last_seen" to lastSeenTimestamp
+                        // Intentionally omitting incoming_requests and outgoing_requests
                     )
 
-                    // Add 'since' from original friend data if available
-                    val originalFriendData = extractSinceValueForFriend(friendsJson, friendName)
-                    if (originalFriendData != null) {
-                        friendData["since"] = originalFriendData
+                    val json = mapper.writeValueAsString(accountInfo)
+
+                    // Cache in Redis with key "account:<username>" and set TTL to 1 hour (3600 seconds)
+                    withContext(Dispatchers.IO) {
+                        syncCommands?.setex("account:$username", 3600, json)
                     }
-
-                    friendData
+                    clerk.logger.info(
+                        Component.text(
+                            "Cached account info for $username in Lettuce cache (TTL: 1 hour)",
+                            NamedTextColor.GREEN
+                        )
+                    )
+                } catch (e: Exception) {
+                    clerk.logger.error(
+                        Component.text(
+                            "Failed to cache account info for $username: ${e.message}",
+                            NamedTextColor.RED
+                        )
+                    )
                 }
-
-                mapper.writeValueAsString(friendsWithLastSeen)
-            } else {
-                friendsJson
             }
-
-            clerk.logger.info(Component.text(
-                "Enhanced friends list for $username: $enhancedFriendsList",
-                NamedTextColor.AQUA
-            ))
-
-            val accountInfo = mapOf(
-                "username" to (row.getString("username") ?: ""),
-                "platform" to (row.getString("platform") ?: ""),
-                "registered_date" to registeredDate,
-                "country" to (row.getString("country") ?: ""),
-                "region" to (row.getString("region") ?: ""),
-                "permissions" to validPermissionsJson,
-                "ranks" to (row.getString("ranks") ?: "[]"),
-                "friends" to enhancedFriendsList, // Use enhanced friends list
-                "settings" to (row.getString("settings") ?: "{}"),
-                "last_seen" to lastSeenTimestamp
-                // Intentionally omitting incoming_requests and outgoing_requests
-            )
-
-            val json = mapper.writeValueAsString(accountInfo)
-
-            // Cache in Redis with key "account:<username>" and set TTL to 1 hour (3600 seconds)
-            withContext(Dispatchers.IO) {
-                syncCommands?.setex("account:$username", 3600, json)
-            }
-            clerk.logger.info(
-                Component.text(
-                    "Cached account info for $username in Lettuce cache (TTL: 1 hour)",
-                    NamedTextColor.GREEN
-                )
-            )
         } catch (e: Exception) {
             clerk.logger.error(
                 Component.text(
-                    "Failed to cache account info for $username: ${e.message}",
+                    "Failed to launch coroutine for caching account: ${e.message}",
                     NamedTextColor.RED
                 )
             )

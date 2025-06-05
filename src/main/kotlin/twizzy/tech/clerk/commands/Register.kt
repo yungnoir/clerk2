@@ -1,7 +1,7 @@
 package twizzy.tech.clerk.commands
 
 import com.velocitypowered.api.proxy.Player
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import revxrsal.commands.annotation.Command
@@ -100,8 +100,8 @@ class Register(private val clerk: Clerk) {
             if (passwordsMatch) {
                 val username = registration.first
                 
-                // Call Account.registerAccount to gather details and then insert into the database
-                runBlocking {
+                // Use MCCoroutine scope instead of blocking
+                clerk.scope.launch {
                     try {
                         val accountDetails = account.registerAccount(actor, username, password)
                         val result = jaSync.insertNewAccount(accountDetails)

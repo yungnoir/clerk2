@@ -30,7 +30,8 @@ class PostSchema {
             TableColumn("incoming_requests", "JSONB", "DEFAULT '[]'::jsonb"),
             TableColumn("outgoing_requests", "JSONB", "DEFAULT '[]'::jsonb"),
             TableColumn("last_seen", "TIMESTAMP WITH TIME ZONE", "DEFAULT NOW()"),
-            TableColumn("settings", "JSONB", "DEFAULT '[]'::jsonb")
+            TableColumn("settings", "JSONB", "DEFAULT '[]'::jsonb"),
+            TableColumn("crossplay", "BOOLEAN", "DEFAULT FALSE")
         )
     }
     

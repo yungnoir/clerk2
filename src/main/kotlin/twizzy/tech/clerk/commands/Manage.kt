@@ -1,7 +1,7 @@
 package twizzy.tech.clerk.commands
 
 import com.velocitypowered.api.proxy.Player
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
@@ -78,22 +78,24 @@ class Manage(private val clerk: Clerk) {
         when (state.first) {
             "old" -> {
                 // Validate old password
-                val validOld = runBlocking {
+                clerk.scope.launch {
                     val query = """
                         SELECT 1 FROM accounts
                         WHERE username = '${username.replace("'", "''")}'
                         AND password = crypt('${message.replace("'", "''")}', password)
                         LIMIT 1;
                     """.trimIndent()
-                    jaSync.executeQuery(query).rows.isNotEmpty()
+                    val result = jaSync.executeQuery(query)
+                    val validOld = result.rows.isNotEmpty()
+
+                    if (!validOld) {
+                        actor.sendMessage(Component.text(langConfig.getMessage("account.reset.incorrect_password")))
+                        // Keep the player in the reset state instead of removing them
+                        return@launch
+                    }
+                    pendingPasswordResets[actor] = "new" to message
+                    actor.sendMessage(Component.text(langConfig.getMessage("account.reset.enter_new")))
                 }
-                if (!validOld) {
-                    actor.sendMessage(Component.text(langConfig.getMessage("account.reset.incorrect_password")))
-                    // Keep the player in the reset state instead of removing them
-                    return
-                }
-                pendingPasswordResets[actor] = "new" to message
-                actor.sendMessage(Component.text(langConfig.getMessage("account.reset.enter_new")))
             }
             "new" -> {
                 val oldPassword = state.second!!
@@ -133,102 +135,110 @@ class Manage(private val clerk: Clerk) {
                 }
 
                 // Actually update the password in the database
-                runBlocking {
+                clerk.scope.launch {
                     val query = """
                         UPDATE accounts
                         SET password = crypt('${newPassword.replace("'", "''")}', gen_salt('bf'))
                         WHERE username = '${username.replace("'", "''")}'
                     """.trimIndent()
                     jaSync.executeQuery(query)
-                }
 
-                actor.disconnect(Component.text(langConfig.getMessage("account.reset.success")))
-                clerk.logger.info(Component.text("$username has just updated their password.", NamedTextColor.GREEN))
-                runBlocking { account.setLoggedOut(username, true) }
-                pendingPasswordResets.remove(actor)
+                    actor.disconnect(Component.text(langConfig.getMessage("account.reset.success")))
+                    clerk.logger.info(Component.text("$username has just updated their password.", NamedTextColor.GREEN))
+                    account.setLoggedOut(username, true)
+                    pendingPasswordResets.remove(actor)
+                }
             }
         }
     }
 
     @Subcommand("logins")
     @Cooldown(10)
-    suspend fun logins(actor: Player) {
+    fun logins(actor: Player) {
         val username = actor.username
 
-        val query = """
-        SELECT logins FROM accounts
-        WHERE username = '${username.replace("'", "''")}'
-        """.trimIndent()
-        val result = jaSync.executeQuery(query)
-        if (result.rows.isEmpty()) {
-            actor.sendMessage(Component.text(langConfig.getMessage("account.logins.no_history")))
-            return
-        }
-        val loginsJson = result.rows[0].getString("logins") ?: "[]"
-        val logins = try {
-            val arr = org.json.JSONArray(loginsJson)
-            (0 until arr.length()).map { arr.getJSONObject(it) }
-        } catch (e: Exception) {
-            emptyList<org.json.JSONObject>()
-        }
-        if (logins.isEmpty()) {
-            actor.sendMessage(Component.text(langConfig.getMessage("account.logins.no_history")))
-            return
-        }
-        actor.sendMessage(Component.text(langConfig.getMessage("account.logins.header")))
-        logins.takeLast(10).forEach { login ->
-            val platform = login.optString("platform", "Java")
-            val dateStr = login.optString("date", "")
-            val country = login.optString("country", "Unknown")
-            val region = login.optString("region", "Unknown")
-            val ago = try {
-                val loginTime = java.time.OffsetDateTime.parse(dateStr)
-                val now = java.time.OffsetDateTime.now()
-                val duration = java.time.Duration.between(loginTime, now)
-                when {
-                    duration.toDays() > 0 -> "${duration.toDays()}d ago"
-                    duration.toHours() > 0 -> "${duration.toHours()}h ago"
-                    duration.toMinutes() > 0 -> "${duration.toMinutes()}m ago"
-                    else -> "just now"
-                }
-            } catch (e: Exception) {
-                "unknown"
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
+            val query = """
+            SELECT logins FROM accounts
+            WHERE username = '${username.replace("'", "''")}'
+            """.trimIndent()
+            val result = jaSync.executeQuery(query)
+            if (result.rows.isEmpty()) {
+                actor.sendMessage(Component.text(langConfig.getMessage("account.logins.no_history")))
+                return@launch
             }
-            val msg = Component.text(langConfig.getMessage("account.logins.format", mapOf(
-                "ago" to ago,
-                "platform" to platform,
-                "country" to country,
-                "region" to region
-            )))
-            actor.sendMessage(msg)
+
+            val loginsJson = result.rows[0].getString("logins") ?: "[]"
+            val logins = try {
+                val arr = org.json.JSONArray(loginsJson)
+                (0 until arr.length()).map { arr.getJSONObject(it) }
+            } catch (e: Exception) {
+                emptyList<org.json.JSONObject>()
+            }
+
+            if (logins.isEmpty()) {
+                actor.sendMessage(Component.text(langConfig.getMessage("account.logins.no_history")))
+                return@launch
+            }
+
+            actor.sendMessage(Component.text(langConfig.getMessage("account.logins.header")))
+            logins.takeLast(10).forEach { login ->
+                val platform = login.optString("platform", "Java")
+                val dateStr = login.optString("date", "")
+                val country = login.optString("country", "Unknown")
+                val region = login.optString("region", "Unknown")
+                val ago = try {
+                    val loginTime = java.time.OffsetDateTime.parse(dateStr)
+                    val now = java.time.OffsetDateTime.now()
+                    val duration = java.time.Duration.between(loginTime, now)
+                    when {
+                        duration.toDays() > 0 -> "${duration.toDays()}d ago"
+                        duration.toHours() > 0 -> "${duration.toHours()}h ago"
+                        duration.toMinutes() > 0 -> "${duration.toMinutes()}m ago"
+                        else -> "just now"
+                    }
+                } catch (e: Exception) {
+                    "unknown"
+                }
+                val msg = Component.text(langConfig.getMessage("account.logins.format", mapOf(
+                    "ago" to ago,
+                    "platform" to platform,
+                    "country" to country,
+                    "region" to region
+                )))
+                actor.sendMessage(msg)
+            }
         }
     }
 
     @Subcommand("autolock")
     @Cooldown(10)
-    suspend fun autolock(actor: Player) {
+    fun autolock(actor: Player) {
         val username = actor.username
 
-        // Check current auto_lock state
-        val checkQuery = """
-            SELECT auto_lock FROM accounts WHERE username = '${username.replace("'", "''")}' LIMIT 1;
-        """.trimIndent()
-        val result = jaSync.executeQuery(checkQuery)
-        val currentAutoLock = result.rows.firstOrNull()?.getBoolean("auto_lock") ?: false
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
+            // Check current auto_lock state
+            val checkQuery = """
+                SELECT auto_lock FROM accounts WHERE username = '${username.replace("'", "''")}' LIMIT 1;
+            """.trimIndent()
+            val result = jaSync.executeQuery(checkQuery)
+            val currentAutoLock = result.rows.firstOrNull()?.getBoolean("auto_lock") ?: false
 
-        val newAutoLock = !currentAutoLock
-        val updateQuery = """
-            UPDATE accounts
-            SET auto_lock = ${if (newAutoLock) "TRUE" else "FALSE"}
-            WHERE username = '${username.replace("'", "''")}'
-        """.trimIndent()
-        jaSync.executeQuery(updateQuery)
+            val newAutoLock = !currentAutoLock
+            val updateQuery = """
+                UPDATE accounts
+                SET auto_lock = ${if (newAutoLock) "TRUE" else "FALSE"}
+                WHERE username = '${username.replace("'", "''")}'
+            """.trimIndent()
+            jaSync.executeQuery(updateQuery)
 
-        if (newAutoLock) {
-            actor.sendMessage(Component.text(langConfig.getMessage("account.autolock.enabled")))
-        } else {
-            actor.sendMessage(Component.text(langConfig.getMessage("account.autolock.disabled")))
+            if (newAutoLock) {
+                actor.sendMessage(Component.text(langConfig.getMessage("account.autolock.enabled")))
+            } else {
+                actor.sendMessage(Component.text(langConfig.getMessage("account.autolock.disabled")))
+            }
         }
     }
 }
-

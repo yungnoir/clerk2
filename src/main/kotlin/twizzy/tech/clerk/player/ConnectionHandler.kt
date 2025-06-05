@@ -19,7 +19,6 @@ class ConnectionHandler(private val clerk: Clerk) {
     @Target(AnnotationTarget.VALUE_PARAMETER)
     annotation class OnlinePlayers()
 
-    private val scope = CoroutineScope(Dispatchers.IO)
     private val logger = clerk.logger
     private val server = clerk.server
     private val jaSync = clerk.jaSync
@@ -43,7 +42,7 @@ class ConnectionHandler(private val clerk: Clerk) {
     }
 
     private fun startLastSeenBatchProcessor() {
-        scope.launch {
+        clerk.scope.launch {
             while (true) {
                 try {
                     processLastSeenUpdates()
@@ -92,7 +91,7 @@ class ConnectionHandler(private val clerk: Clerk) {
             if (lobby != null) {
                 event.setInitialServer(lobby)
                 // Check if player has staff permission and add to staffManager
-                scope.launch {
+                clerk.scope.launch {
                     // Use the shared Account instance from Clerk instead of creating a new one
                     val hasPermission = clerk.account.checkPermission(player.username, "clerk.staff", clerk.lettuce)
                     if (hasPermission) {
@@ -139,7 +138,7 @@ class ConnectionHandler(private val clerk: Clerk) {
                 lastSeenUpdateQueue[username] = "offline"
 
                 // Asynchronously update their data from Redis to PostgreSQL
-                scope.launch {
+                clerk.scope.launch {
                     try {
                         logger.info(Component.text(
                             "Player $username disconnected, synchronizing their Redis cache to PostgreSQL...",
@@ -178,7 +177,7 @@ class ConnectionHandler(private val clerk: Clerk) {
 
     private fun sendAuthReminder(player: Player) {
         val uuid = player.uniqueId
-        scope.launch {
+        clerk.scope.launch {
             while (clerk.unauthenticatedPlayers.contains(uuid)) {
                 player.sendActionBar(Component.text("Please /login or /register to access the server."))
                 delay(2_000)

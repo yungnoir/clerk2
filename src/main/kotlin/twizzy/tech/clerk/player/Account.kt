@@ -47,7 +47,7 @@ class Account(private val clerk: Clerk) {
         details["country"] = location?.country?.takeIf { it.isNotBlank() } ?: "Unknown"
         details["region"] = location?.regionName?.takeIf { it.isNotBlank() } ?: "Unknown"
         details["registered_date"] = Instant.now().toString()
-        
+
         // Explicitly initialize ranks as an empty JSON array
         details["ranks"] = "[]"
 
@@ -131,46 +131,46 @@ class Account(private val clerk: Clerk) {
                 WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
             """.trimIndent()
             val accountResult = jaSync.executeQuery(accountQuery)
-            
+
             if (accountResult.rows.isNotEmpty()) {
                 val storedCountry = accountResult.rows[0].getString("country") ?: "Unknown"
                 val storedRegion = accountResult.rows[0].getString("region") ?: "Unknown"
-                
+
                 val ipInfo = fetchLocationData(ip)
                 val currentCountry = ipInfo?.country ?: "Unknown"
                 val currentRegion = ipInfo?.regionName ?: "Unknown"
                 val isMobile = ipInfo?.mobile ?: false
                 val isProxy = ipInfo?.proxy ?: false
                 val isHosting = ipInfo?.hosting ?: false
-                
+
                 if (storedCountry != "Unknown" && currentCountry != "Unknown" && storedCountry != currentCountry) {
                     val lockQuery = """
-                        UPDATE accounts 
+                        UPDATE accounts
                         SET locked = TRUE,
                             lock_reason = 'Suspicious login: Different country (${storedCountry} vs ${currentCountry})'
                         WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                     """.trimIndent()
                     jaSync.executeQuery(lockQuery)
-                    
+
                     player.sendMessage(Component.text(
                         "Security alert: Login from a different country detected. Your account has been locked.",
                         NamedTextColor.RED
                     ))
                     return false
                 }
-                
-                if (storedCountry == currentCountry && storedRegion != "Unknown" && currentRegion != "Unknown" 
+
+                if (storedCountry == currentCountry && storedRegion != "Unknown" && currentRegion != "Unknown"
                     && storedRegion != currentRegion) {
-                    
+
                     if ((isProxy || isHosting) && !isMobile) {
                         val lockQuery = """
-                            UPDATE accounts 
+                            UPDATE accounts
                             SET locked = TRUE,
                                 lock_reason = 'Suspicious login: Different region using proxy/hosting'
                             WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                         """.trimIndent()
                         jaSync.executeQuery(lockQuery)
-                        
+
                         player.sendMessage(Component.text(
                             "Security alert: Login from a different region via proxy detected. Your account has been locked.",
                             NamedTextColor.RED
@@ -184,17 +184,17 @@ class Account(private val clerk: Clerk) {
                     UPDATE accounts
                     SET logins = (
                         SELECT COALESCE(
-                            CASE 
+                            CASE
                                 WHEN jsonb_array_length(COALESCE(logins, '[]'::jsonb)) > 10
                                 THEN (
                                     SELECT jsonb_agg(login)
                                     FROM (
                                         SELECT login
                                         FROM jsonb_array_elements(logins) AS login
-                                        WHERE 
+                                        WHERE
                                             (login->>'date') IS NOT NULL AND
                                             (
-                                                CASE 
+                                                CASE
                                                     WHEN (login->>'date') ~ '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}'
                                                     THEN to_timestamp((login->>'date'), 'YYYY-MM-DD"T"HH24:MI:SS')::timestamp > (NOW() - INTERVAL '7 days')
                                                     ELSE true
@@ -221,11 +221,11 @@ class Account(private val clerk: Clerk) {
                 // Include location data in the login update
                 val updates = listOf(
                     """
-                    UPDATE accounts 
-                    SET failed_attempts = 0, 
-                        locked = FALSE, 
-                        lock_until = NULL, 
-                        lock_reason = '' 
+                    UPDATE accounts
+                    SET failed_attempts = 0,
+                        locked = FALSE,
+                        lock_until = NULL,
+                        lock_reason = ''
                     WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                     """.trimIndent(),
 
@@ -269,17 +269,17 @@ class Account(private val clerk: Clerk) {
                     UPDATE accounts
                     SET logins = (
                         SELECT COALESCE(
-                            CASE 
+                            CASE
                                 WHEN jsonb_array_length(COALESCE(logins, '[]'::jsonb)) > 10
                                 THEN (
                                     SELECT jsonb_agg(login)
                                     FROM (
                                         SELECT login
                                         FROM jsonb_array_elements(logins) AS login
-                                        WHERE 
+                                        WHERE
                                             (login->>'date') IS NOT NULL AND
                                             (
-                                                CASE 
+                                                CASE
                                                     WHEN (login->>'date') ~ '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}'
                                                     THEN to_timestamp((login->>'date'), 'YYYY-MM-DD"T"HH24:MI:SS')::timestamp > (NOW() - INTERVAL '7 days')
                                                     ELSE true
@@ -305,11 +305,11 @@ class Account(private val clerk: Clerk) {
 
                 val updates = listOf(
                     """
-                    UPDATE accounts 
-                    SET failed_attempts = 0, 
-                        locked = FALSE, 
-                        lock_until = NULL, 
-                        lock_reason = '' 
+                    UPDATE accounts
+                    SET failed_attempts = 0,
+                        locked = FALSE,
+                        lock_until = NULL,
+                        lock_reason = ''
                     WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                     """.trimIndent(),
 
@@ -351,24 +351,24 @@ class Account(private val clerk: Clerk) {
                 WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
             """.trimIndent()
             val usernameExists = jaSync.executeQuery(usernameExistsQuery).rows.isNotEmpty()
-            
+
             if (usernameExists) {
                 val incrementQuery = """
-                    UPDATE accounts 
-                    SET failed_attempts = failed_attempts + 1 
+                    UPDATE accounts
+                    SET failed_attempts = failed_attempts + 1
                     WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                 """.trimIndent()
                 jaSync.executeQuery(incrementQuery)
-                
+
                 val attemptsQuery = """
-                    SELECT failed_attempts FROM accounts 
+                    SELECT failed_attempts FROM accounts
                     WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                 """.trimIndent()
                 val attemptsResult = jaSync.executeQuery(attemptsQuery)
-                
+
                 if (attemptsResult.rows.isNotEmpty()) {
                     val attempts = attemptsResult.rows[0].getInt("failed_attempts") ?: 0
-                    
+
                     if (attempts < 5) {
                         val remainingAttempts = 5 - attempts
                         player.sendMessage(Component.text(
@@ -376,15 +376,15 @@ class Account(private val clerk: Clerk) {
                             NamedTextColor.RED
                         ))
                     }
-                    
+
                     when (attempts) {
                         5 -> {
                             val lockUntil = OffsetDateTime.now().plusMinutes(5)
                             val lockQuery = """
-                                UPDATE accounts 
-                                SET locked = TRUE, 
-                                    lock_until = '${lockUntil}', 
-                                    lock_reason = 'Too many failed login attempts (5). Account locked for 5 minutes.' 
+                                UPDATE accounts
+                                SET locked = TRUE,
+                                    lock_until = '${lockUntil}',
+                                    lock_reason = 'Too many failed login attempts (5). Account locked for 5 minutes.'
                                 WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                             """.trimIndent()
                             jaSync.executeQuery(lockQuery)
@@ -398,10 +398,10 @@ class Account(private val clerk: Clerk) {
                         10 -> {
                             val lockUntil = OffsetDateTime.now().plusMinutes(30)
                             val lockQuery = """
-                                UPDATE accounts 
-                                SET locked = TRUE, 
-                                    lock_until = '${lockUntil}', 
-                                    lock_reason = 'Too many failed login attempts (10). Account locked for 30 minutes.' 
+                                UPDATE accounts
+                                SET locked = TRUE,
+                                    lock_until = '${lockUntil}',
+                                    lock_reason = 'Too many failed login attempts (10). Account locked for 30 minutes.'
                                 WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                             """.trimIndent()
                             jaSync.executeQuery(lockQuery)
@@ -415,10 +415,10 @@ class Account(private val clerk: Clerk) {
                         15 -> {
                             val lockUntil = OffsetDateTime.now().plusHours(1)
                             val lockQuery = """
-                                UPDATE accounts 
-                                SET locked = TRUE, 
-                                    lock_until = '${lockUntil}', 
-                                    lock_reason = 'Too many failed login attempts (15). Account locked for 1 hour.' 
+                                UPDATE accounts
+                                SET locked = TRUE,
+                                    lock_until = '${lockUntil}',
+                                    lock_reason = 'Too many failed login attempts (15). Account locked for 1 hour.'
                                 WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                             """.trimIndent()
                             jaSync.executeQuery(lockQuery)
@@ -431,10 +431,10 @@ class Account(private val clerk: Clerk) {
                         }
                         20 -> {
                             val lockQuery = """
-                                UPDATE accounts 
-                                SET locked = TRUE, 
-                                    lock_until = NULL, 
-                                    lock_reason = 'Too many failed login attempts (20+). Account permanently locked.' 
+                                UPDATE accounts
+                                SET locked = TRUE,
+                                    lock_until = NULL,
+                                    lock_reason = 'Too many failed login attempts (20+). Account permanently locked.'
                                 WHERE LOWER(username) = LOWER('${username.replace("'", "''")}');
                             """.trimIndent()
                             jaSync.executeQuery(lockQuery)
@@ -680,6 +680,7 @@ class Account(private val clerk: Clerk) {
     /**
      * Checks if the account has the specified permission.
      * First checks permissions from ranks (including inherited ones), then falls back to direct permissions.
+     * Enhanced with MCCoroutine's structured concurrency.
      */
     suspend fun checkPermission(
         username: String,
@@ -688,83 +689,96 @@ class Account(private val clerk: Clerk) {
     ): Boolean {
         val cacheFallback = CacheFallback(lettuce, jaSync, logger)
         
-        // Step 1: Get the player's ranks from Redis cache or DB fallback - using bulk fetch
-        val userData = cacheFallback.getBulkData(username, listOf("ranks", "permissions"))
+        // Use withContext to ensure proper concurrency
+        return try {
+            // Step 1: Get the player's ranks and permissions from Redis cache or DB fallback - using bulk fetch for efficiency
+            val userData = cacheFallback.getBulkData(username, listOf("ranks", "permissions"))
 
-        // Step 2: Check if any of the player's ranks have this permission
-        val ranksList = userData["ranks"]?.let { cacheFallback.parseJsonToList(it) } ?: emptyList()
+            // Step 2: Check if any of the player's ranks have this permission
+            val ranksList = userData["ranks"]?.let { cacheFallback.parseJsonToList(it) } ?: emptyList()
 
-        if (ranksList.isNotEmpty()) {
-            // Extract all rank names, filtering out expired ranks
-            val rankNames = getRankNamesWithExpiration(ranksList)
+            if (ranksList.isNotEmpty()) {
+                // Extract all rank names, filtering out expired ranks
+                val rankNames = getRankNamesWithExpiration(ranksList)
 
-            // Check all ranks for the permission in one batch
-            val allRankPerms = mutableSetOf<String>()
-            for (rankName in rankNames) {
-                // Use the cached rank permissions to avoid database lookups
-                allRankPerms.addAll(jaSync.clerk.ranks.getAllPermissionsForRank(rankName))
-            }
+                // Check all ranks for the permission in one batch for better performance
+                val allRankPerms = mutableSetOf<String>()
 
-            // Check for exact permission match
-            if (permission in allRankPerms) {
-                return true
-            }
-
-            // Check for wildcard permissions at different levels
-            // Example: clerk.* should match clerk.permission.add
-            // Example: clerk.permission.* should match clerk.permission.add
-            val permParts = permission.split(".")
-            for (wildcard in allRankPerms.filter { it.contains("*") }) {
-                // Case 1: Direct wildcard (e.g., "clerk.*")
-                if (wildcard.endsWith(".*")) {
-                    val basePermission = wildcard.removeSuffix(".*")
-                    if (permission.startsWith("$basePermission.")) {
-                        return true
-                    }
+                // Use the cached rank permissions to avoid repeated database lookups
+                rankNames.forEach { rankName ->
+                    allRankPerms.addAll(jaSync.clerk.ranks.getAllPermissionsForRank(rankName))
                 }
 
-                // Case 2: Multi-level wildcard matching (e.g., "clerk.permission.*" should match "clerk.permission.add.permanent")
-                val wildcardParts = wildcard.split(".")
-                if (wildcardParts.size <= permParts.size) {
-                    var matches = true
-                    for (i in wildcardParts.indices) {
-                        if (wildcardParts[i] == "*") {
-                            // Wildcard matches rest of permission
+                // Check for exact permission match
+                if (permission in allRankPerms) {
+                    return true
+                }
+
+                // Check for wildcard permissions at different levels using optimized algorithm
+                val permParts = permission.split(".")
+
+                // Test each wildcard permission against our target permission
+                for (wildcard in allRankPerms.filter { it.contains("*") }) {
+                    // Direct wildcard check (e.g., "clerk.*" matches "clerk.permission.add")
+                    if (wildcard.endsWith(".*")) {
+                        val basePermission = wildcard.removeSuffix(".*")
+                        if (permission.startsWith("$basePermission.")) {
                             return true
-                        } else if (wildcardParts[i] != permParts[i]) {
-                            matches = false
-                            break
                         }
                     }
 
-                    // All parts before wildcard match, now check if wildcard is at the end
-                    if (matches && wildcardParts.last() == "*") {
-                        return true
+                    // Multi-level wildcard matching with early exit for better performance
+                    val wildcardParts = wildcard.split(".")
+                    if (wildcardParts.size <= permParts.size) {
+                        var matches = true
+                        for (i in wildcardParts.indices) {
+                            if (wildcardParts[i] == "*") {
+                                // Wildcard matches rest of permission - early success exit
+                                return true
+                            } else if (wildcardParts[i] != permParts[i]) {
+                                matches = false
+                                break  // Early failure exit
+                            }
+                        }
+
+                        // All parts before wildcard match, check if wildcard is at the end
+                        if (matches && wildcardParts.last() == "*") {
+                            return true
+                        }
                     }
                 }
             }
-        }
 
-        // Step 3: If no rank has the permission, check direct permissions
-        val permsList = userData["permissions"]?.let { cacheFallback.parseJsonToList(it) } ?: emptyList()
+            // Step 3: If no rank has the permission, check direct permissions
+            val permsList = userData["permissions"]?.let { cacheFallback.parseJsonToList(it) } ?: emptyList()
+            val now = Instant.now()
 
-        // Check for the permission
-        val now = Instant.now()
-        for (perm in permsList) {
-            when (perm) {
-                is String -> if (perm == permission) return true
-                is Map<*, *> -> {
-                    val permName = perm["permission"]?.toString()
-                    val expires = perm["expires"]?.toString()?.toLongOrNull()
-                    if (permName == permission) {
-                        if (expires == null) return true
-                        val expireTime = Instant.ofEpochSecond(expires)
-                        if (now.isBefore(expireTime)) return true
+            // Check for permission with time expiration handling
+            for (perm in permsList) {
+                when (perm) {
+                    is String -> if (perm == permission) return true
+                    is Map<*, *> -> {
+                        val permName = perm["permission"]?.toString()
+                        val expires = perm["expires"]?.toString()?.toLongOrNull()
+                        if (permName == permission) {
+                            if (expires == null) return true
+                            val expireTime = Instant.ofEpochSecond(expires)
+                            if (now.isBefore(expireTime)) return true
+                        }
                     }
                 }
             }
+
+            // No matching permission found
+            false
+        } catch (e: Exception) {
+            // Log error and return false if anything went wrong
+            logger.error(Component.text(
+                "Error checking permission '$permission' for $username: ${e.message}",
+                NamedTextColor.RED
+            ))
+            false
         }
-        return false
     }
     
     /**

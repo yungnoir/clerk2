@@ -24,9 +24,6 @@ class Friend(private val clerk: Clerk, ) {
     private val friends = clerk.friends
     private val langConfig = JacksonFactory.loadLangConfig()
 
-    // Use a shared CoroutineScope for all friend operations
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
 
     @Command("friend")
     fun friendUsage(actor: Player) {
@@ -69,7 +66,7 @@ class Friend(private val clerk: Clerk, ) {
             return
         }
 
-        scope.launch {
+        clerk.scope.launch {
             val result = friends.addFriend(actor.username, target)
 
             when (result) {
@@ -153,7 +150,7 @@ class Friend(private val clerk: Clerk, ) {
             return
         }
 
-        scope.launch {
+        clerk.scope.launch {
             val result = friends.removeFriend(actor.username, target)
 
             when (result) {
@@ -187,7 +184,7 @@ class Friend(private val clerk: Clerk, ) {
             return
         }
 
-        scope.launch {
+        clerk.scope.launch {
             val success = friends.denyFriend(target, actor.username)
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("friend.deny.success", mapOf("target" to target)), NamedTextColor.YELLOW))
@@ -202,7 +199,7 @@ class Friend(private val clerk: Clerk, ) {
     fun listRequests(
         actor: Player
     ) {
-        scope.launch {
+        clerk.scope.launch {
             val incoming = friends.getRequests(actor.username)
             val outgoing = friends.getOutgoingRequests(actor.username)
 
@@ -257,7 +254,7 @@ class Friend(private val clerk: Clerk, ) {
     fun toggleRequests(
         actor: Player
     ) {
-        scope.launch {
+        clerk.scope.launch {
             // Use the toggleSetting method which handles getting and toggling in one operation
             val newSetting = account.toggleSetting(actor.username, "toggledRequests", clerk.lettuce)
             // Display message based on the new setting value
@@ -274,7 +271,7 @@ class Friend(private val clerk: Clerk, ) {
     fun listFriends(
         actor: Player
     ) {
-        scope.launch {
+        clerk.scope.launch {
             val friendsList = friends.getFriends(actor.username)
             actor.sendMessage(
                 Component.text(

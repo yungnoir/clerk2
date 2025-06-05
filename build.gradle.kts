@@ -38,6 +38,9 @@ dependencies {
     // Kotlin Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactive:1.6.4")
+    implementation("com.github.shynixn.mccoroutine:mccoroutine-velocity-api:2.22.0")
+    implementation("com.github.shynixn.mccoroutine:mccoroutine-velocity-core:2.22.0")
+
 
     // Lamp Command Library
     implementation("io.github.revxrsal:lamp.common:4.0.0-rc.12")

@@ -1,7 +1,7 @@
 package twizzy.tech.clerk.commands
 
 import com.velocitypowered.api.proxy.Player
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
@@ -13,7 +13,6 @@ import twizzy.tech.clerk.Clerk
 import twizzy.tech.clerk.player.Account
 import twizzy.tech.clerk.player.Ranks
 import twizzy.tech.clerk.util.JacksonFactory
-import twizzy.tech.clerk.util.JaSync
 import java.time.Instant
 import java.util.regex.Pattern
 
@@ -71,12 +70,13 @@ class Grant(private val clerk: Clerk) {
             }
         }
 
-        runBlocking {
+        // Use MCCoroutine scope instead of runBlocking
+        clerk.scope.launch {
             // Check if the rank exists
             val rankObj = ranks.getRank(rank)
             if (rankObj == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("grant.add.rank_not_found", mapOf("rank" to rank))))
-                return@runBlocking
+                return@launch
             }
             
             // Grant the rank to the target with optional duration
@@ -116,12 +116,13 @@ class Grant(private val clerk: Clerk) {
             return
         }
         
-        runBlocking {
+        // Use MCCoroutine scope instead of runBlocking
+        clerk.scope.launch {
             // Check if the rank exists
             val rankObj = ranks.getRank(rank)
             if (rankObj == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("grant.remove.rank_not_found", mapOf("rank" to rank))))
-                return@runBlocking
+                return@launch
             }
             
             // Remove the rank from the target
@@ -152,13 +153,14 @@ class Grant(private val clerk: Clerk) {
             return
         }
         
-        runBlocking {
+        // Use MCCoroutine scope instead of runBlocking
+        clerk.scope.launch {
             // Use the new getUserRanks method to get ranks with expiration info
             val userRanks = ranks.getUserRanks(target)
             
             if (userRanks.isEmpty()) {
                 actor.sendMessage(Component.text(langConfig.getMessage("grants.list.none", mapOf("target" to target))))
-                return@runBlocking
+                return@launch
             }
 
             // Display ranks to the actor

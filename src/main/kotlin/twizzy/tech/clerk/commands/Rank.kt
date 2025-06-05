@@ -1,7 +1,7 @@
 package twizzy.tech.clerk.commands
 
 import com.velocitypowered.api.proxy.Player
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
@@ -48,7 +48,6 @@ class Rank(private val clerk: Clerk) {
     }
     
     @Subcommand("create <name>")
-    @CommandPermission("clerk.rank.create")
     fun createRank(
         actor: Player,
         @Optional name: String?
@@ -59,12 +58,13 @@ class Rank(private val clerk: Clerk) {
             return
         }
 
-        runBlocking {
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             // Check if the rank already exists
             val existingRank = ranks.getRank(name)
             if (existingRank != null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.create.exists", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
             // Create rank with default values
             val success = ranks.setRank(
@@ -83,7 +83,6 @@ class Rank(private val clerk: Clerk) {
     }
 
     @Subcommand("delete <name>")
-    @CommandPermission("clerk.rank.delete")
     fun deleteRank(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?
@@ -93,12 +92,14 @@ class Rank(private val clerk: Clerk) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.delete.usage")))
             return
         }
-        runBlocking {
+
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             // Check if the rank exists
             val existingRank = ranks.getRank(name)
             if (existingRank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.delete.not_found", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
             val success = ranks.deleteRank(name)
             if (success) {
@@ -110,22 +111,21 @@ class Rank(private val clerk: Clerk) {
     }
 
     @Subcommand("list")
-    @CommandPermission("clerk.rank.list")
     fun listRanks(
         actor: Player
     ) {
         val allRanks = ranks.getAllRanks()
-        
+
         if (allRanks.isEmpty()) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.list.none")))
             return
         }
-        
+
         actor.sendMessage(Component.text(langConfig.getMessage("rank.list.header")))
 
         // Sort ranks by weight (highest first)
         val sortedRanks = allRanks.values.sortedByDescending { it.weight }
-        
+
         for (rank in sortedRanks) {
             val defaultTag = if (rank.isDefault) langConfig.getMessage("rank.info.default_tag") else ""
             val prefix = langConfig.getMessage("rank.info.prefix", mapOf("prefix" to rank.prefix))
@@ -141,7 +141,6 @@ class Rank(private val clerk: Clerk) {
     }
     
     @Subcommand("info <name>")
-    @CommandPermission("clerk.rank.info")
     fun rankInfo(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?
@@ -151,14 +150,14 @@ class Rank(private val clerk: Clerk) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.info.usage")))
             return
         }
-        
+
         val rank = ranks.getRank(name)
-        
+
         if (rank == null) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.info.not_found", mapOf("name" to name))))
             return
         }
-        
+
         val defaultTag = if (rank.isDefault) langConfig.getMessage("rank.info.default_tag") else ""
         actor.sendMessage(Component.text(langConfig.getMessage("rank.info.header", mapOf(
             "name" to name,
@@ -176,7 +175,7 @@ class Rank(private val clerk: Clerk) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.info.permissions_entry", mapOf("permission" to perm))))
             }
         }
-        
+
         actor.sendMessage(Component.text(langConfig.getMessage("rank.info.inheritance_header")))
         if (rank.inheritance.isEmpty()) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.info.inheritance_none")))
@@ -185,16 +184,15 @@ class Rank(private val clerk: Clerk) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.info.inheritance_entry", mapOf("parent" to parent))))
             }
         }
-        
+
         actor.sendMessage(Component.text(langConfig.getMessage("rank.info.users_header", mapOf("count" to rank.users.size.toString()))))
         if (rank.users.isNotEmpty()) {
             val userList = rank.users.joinToString(", ")
             actor.sendMessage(Component.text(langConfig.getMessage("rank.info.users_list", mapOf("users" to userList))))
         }
     }
-    
+
     @Subcommand("setprefix <name> <prefix>")
-    @CommandPermission("clerk.rank.setprefix")
     fun setPrefix(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?,
@@ -206,14 +204,15 @@ class Rank(private val clerk: Clerk) {
         }
         val prefix = prefix.replace('&', '§')
 
-        runBlocking {
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val rank = ranks.getRank(name)
-            
+
             if (rank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.setprefix.not_found", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val success = ranks.setRank(
                 name = rank.name,
                 prefix = prefix,
@@ -223,7 +222,7 @@ class Rank(private val clerk: Clerk) {
                 users = rank.users,
                 isDefault = rank.isDefault
             )
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.setprefix.success", mapOf(
                     "name" to name,
@@ -234,9 +233,8 @@ class Rank(private val clerk: Clerk) {
             }
         }
     }
-    
+
     @Subcommand("setweight <name> <weight>")
-    @CommandPermission("clerk.rank.setweight")
     fun setWeight(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?,
@@ -246,15 +244,16 @@ class Rank(private val clerk: Clerk) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.setweight.usage")))
             return
         }
-        
-        runBlocking {
+
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val rank = ranks.getRank(name)
-            
+
             if (rank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.setweight.not_found", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val success = ranks.setRank(
                 name = rank.name,
                 prefix = rank.prefix,
@@ -264,7 +263,7 @@ class Rank(private val clerk: Clerk) {
                 users = rank.users,
                 isDefault = rank.isDefault
             )
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.setweight.success", mapOf(
                     "name" to name,
@@ -277,7 +276,6 @@ class Rank(private val clerk: Clerk) {
     }
 
     @Subcommand("permission add <name> <permission>")
-    @CommandPermission("clerk.rank.permission")
     fun addPermission(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?,
@@ -287,15 +285,16 @@ class Rank(private val clerk: Clerk) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.permission.add.usage")))
             return
         }
-        
-        runBlocking {
+
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val rank = ranks.getRank(name)
-            
+
             if (rank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.permission.add.not_found", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val updatedPerms = if (permission !in rank.permissions) {
                 rank.permissions + permission
             } else {
@@ -303,9 +302,9 @@ class Rank(private val clerk: Clerk) {
                     "permission" to permission,
                     "name" to name
                 ))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val success = ranks.setRank(
                 name = rank.name,
                 prefix = rank.prefix,
@@ -315,7 +314,7 @@ class Rank(private val clerk: Clerk) {
                 users = rank.users,
                 isDefault = rank.isDefault
             )
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.permission.add.success", mapOf(
                     "permission" to permission,
@@ -326,9 +325,8 @@ class Rank(private val clerk: Clerk) {
             }
         }
     }
-    
+
     @Subcommand("permission remove <name> <permission>")
-    @CommandPermission("clerk.rank.permission")
     fun removePermission(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?,
@@ -338,15 +336,16 @@ class Rank(private val clerk: Clerk) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.permission.remove.usage")))
             return
         }
-        
-        runBlocking {
+
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val rank = ranks.getRank(name)
-            
+
             if (rank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.permission.remove.not_found", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val updatedPerms = if (permission in rank.permissions) {
                 rank.permissions.filter { it != permission }
             } else {
@@ -354,9 +353,9 @@ class Rank(private val clerk: Clerk) {
                     "permission" to permission,
                     "name" to name
                 ))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val success = ranks.setRank(
                 name = rank.name,
                 prefix = rank.prefix,
@@ -366,7 +365,7 @@ class Rank(private val clerk: Clerk) {
                 users = rank.users,
                 isDefault = rank.isDefault
             )
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.permission.remove.success", mapOf(
                     "permission" to permission,
@@ -377,9 +376,8 @@ class Rank(private val clerk: Clerk) {
             }
         }
     }
-    
+
     @Subcommand("inherit add <name> <parent>")
-    @CommandPermission("clerk.rank.inherit")
     fun addInheritance(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?,
@@ -389,27 +387,28 @@ class Rank(private val clerk: Clerk) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.add.usage")))
             return
         }
-        
-        runBlocking {
+
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val rank = ranks.getRank(name)
             val parentRank = ranks.getRank(parent)
-            
+
             if (rank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.add.not_found", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
-            
+
             if (parentRank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.add.parent_not_found", mapOf("parent" to parent))))
-                return@runBlocking
+                return@launch
             }
-            
+
             // Prevent circular inheritance
             if (name == parent) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.add.circular")))
-                return@runBlocking
+                return@launch
             }
-            
+
             val updatedInheritance = if (parent !in rank.inheritance) {
                 rank.inheritance + parent
             } else {
@@ -417,9 +416,9 @@ class Rank(private val clerk: Clerk) {
                     "name" to name,
                     "parent" to parent
                 ))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val success = ranks.setRank(
                 name = rank.name,
                 prefix = rank.prefix,
@@ -429,7 +428,7 @@ class Rank(private val clerk: Clerk) {
                 users = rank.users,
                 isDefault = rank.isDefault
             )
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.add.success", mapOf(
                     "name" to name,
@@ -440,9 +439,8 @@ class Rank(private val clerk: Clerk) {
             }
         }
     }
-    
+
     @Subcommand("inherit remove <name> <parent>")
-    @CommandPermission("clerk.rank.inherit")
     fun removeInheritance(
         actor: Player,
         @Optional @Ranks.CachedRanks name: String?,
@@ -452,15 +450,16 @@ class Rank(private val clerk: Clerk) {
             actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.remove.usage")))
             return
         }
-        
-        runBlocking {
+
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val rank = ranks.getRank(name)
-            
+
             if (rank == null) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.remove.not_found", mapOf("name" to name))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val updatedInheritance = if (parent in rank.inheritance) {
                 rank.inheritance.filter { it != parent }
             } else {
@@ -468,9 +467,9 @@ class Rank(private val clerk: Clerk) {
                     "name" to name,
                     "parent" to parent
                 ))))
-                return@runBlocking
+                return@launch
             }
-            
+
             val success = ranks.setRank(
                 name = rank.name,
                 prefix = rank.prefix,
@@ -480,7 +479,7 @@ class Rank(private val clerk: Clerk) {
                 users = rank.users,
                 isDefault = rank.isDefault
             )
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.inherit.remove.success", mapOf(
                     "name" to name,
@@ -493,14 +492,13 @@ class Rank(private val clerk: Clerk) {
     }
 
     @Command("ranks save")
-    @CommandPermission("clerk.rank.admin")
     fun saveRanks(
         actor: Player
     ) {
-        // Save command doesn't need parameter validation
-        runBlocking {
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val success = ranks.saveRanks()
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.save.success")))
             } else {
@@ -510,14 +508,13 @@ class Rank(private val clerk: Clerk) {
     }
 
     @Command("ranks load")
-    @CommandPermission("clerk.rank.admin")
     fun loadRanks(
         actor: Player
     ) {
-        // Load command doesn't need parameter validation
-        runBlocking {
+        // Use MCCoroutine scope instead of blocking
+        clerk.scope.launch {
             val success = ranks.loadRanks()
-            
+
             if (success) {
                 actor.sendMessage(Component.text(langConfig.getMessage("rank.load.success")))
             } else {
